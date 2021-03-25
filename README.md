@@ -29,6 +29,15 @@ I used DROMIDA Q100 RC transmitter as a base, it already has NRF24 soldered, but
 | A6                  | BUTTON                         |
 | A7                  | BUTTON                         |
 
+## Configuration
+
+To configure the app for your hardware change _ANALOG\_CHANNELS_ number and _a\_channels_ array:
+_input_: A0..A7 used on Arduino;
+_min\_val, max\_val_: values from _analogRead_ when button released/pressed or stcks at the edge positions.
+
+For debugging purpose the app prints some debug information via Serial interface at 115200.
+
+
 ![Nano+DROMIDA Q100](/arduino_transmitter.jpg?raw=true)
 
 # nrf24-multipro
