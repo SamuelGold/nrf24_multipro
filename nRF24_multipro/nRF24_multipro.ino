@@ -14,6 +14,7 @@
 // #   - victzh for XN297 emulation layer   #
 // #   - Hasi for Arduino PPM decoder       #
 // #   - hexfet, midelic, closedsink ...    #
+// #   - SamGold for analog input           #
 // ##########################################
 //
 //
@@ -34,25 +35,25 @@
 // ############ Wiring ################
 #define PPM_pin   2  // PPM in
 //SPI Comm.pins with nRF24L01
-#define MOSI_pin  3  // MOSI - D3
-#define SCK_pin   4  // SCK  - D4
-#define CE_pin    5  // CE   - D5
-#define MISO_pin  A0 // MISO - A0
-#define CS_pin    A1 // CS   - A1
+#define MOSI_pin    11  // MOSI
+#define SCK_pin     13  // SCK
+#define CE_pin      7  // CE
+#define MISO_pin    12 // MISO
+#define CS_pin      8 // CS
 
-#define ledPin    13 // LED  - D13
+#define ledPin      4 // LED
 
 // SPI outputs
-#define MOSI_on PORTD |= _BV(3)  // PD3
-#define MOSI_off PORTD &= ~_BV(3)// PD3
-#define SCK_on PORTD |= _BV(4)   // PD4
-#define SCK_off PORTD &= ~_BV(4) // PD4
-#define CE_on PORTD |= _BV(5)    // PD5
-#define CE_off PORTD &= ~_BV(5)  // PD5
-#define CS_on PORTC |= _BV(1)    // PC1
-#define CS_off PORTC &= ~_BV(1)  // PC1
+#define MOSI_on PORTB |= _BV(3)
+#define MOSI_off PORTB &= ~_BV(3)
+#define SCK_on PORTB |= _BV(5)
+#define SCK_off PORTB &= ~_BV(5)
+#define CE_on PORTD |= _BV(7)
+#define CE_off PORTD &= ~_BV(7)
+#define CS_on PORTB |= _BV(0)
+#define CS_off PORTB &= ~_BV(0)
 // SPI input
-#define  MISO_on (PINC & _BV(0)) // PC0
+#define  MISO_on (PINB & _BV(4))
 
 #define RF_POWER TX_POWER_80mW 
 
@@ -84,6 +85,8 @@ enum chan_order{
 #define PPM_MAX_COMMAND 1700
 #define GET_FLAG(ch, mask) (ppm[ch] > PPM_MAX_COMMAND ? mask : 0)
 #define GET_FLAG_INV(ch, mask) (ppm[ch] < PPM_MIN_COMMAND ? mask : 0)
+#define ANALOG_CHANNELS 10
+#define ANALOG_THRESH 20
 
 // supported protocols
 enum {
@@ -123,6 +126,14 @@ struct {
     uint32_t lastUpdate;
 } telemetry_data;
 
+typedef struct{
+  uint8_t  input;
+  uint16_t min_val;
+  uint16_t max_val;
+  bool     button;
+  uint16_t bind_to;
+} analog_channel_t;
+
 uint8_t transmitterID[4];
 uint8_t current_protocol;
 static volatile bool ppm_ok = false;
@@ -132,8 +143,39 @@ volatile uint16_t Servo_data[12];
 static uint16_t ppm[12] = {PPM_MIN,PPM_MIN,PPM_MIN,PPM_MIN,PPM_MID,PPM_MID,
                            PPM_MID,PPM_MID,PPM_MID,PPM_MID,PPM_MID,PPM_MID,};
 
+
+//A0 ELEVATOR        MIN 0 MAX 719 CENTER 363
+//A1 AILERON         MIN 0 MAX 719 CENTER 358
+//A2 THROTTLE        MIN 0 MAX 719 CENTER 361
+//A3 RUDDER          MIN 0 MAX 714 CENTER 350
+
+//A4 0
+//   DOWN_LEFT_BTN1 652
+//   DOWN_LEFT_BTN2 357
+
+//A5 RELEASED 0
+//   DOWN_RIGHT_BTN1 652
+//   DOWN_RIGHT_BTN2 357
+
+//A6 FRONT_RIGHT_BTN RELEASED 720 PRESSED 0
+//A7 FRONT_LEFT_BTN  RELEASED 720 PRESSED 0
+
+analog_channel_t a_channels[ANALOG_CHANNELS] = {
+  {.input = 0, .min_val = 0,   .max_val = 719, .button = false, .bind_to = ELEVATOR},
+  {.input = 1, .min_val = 719, .max_val = 0,   .button = false, .bind_to = AILERON},
+  {.input = 2, .min_val = 719, .max_val = 0,   .button = false, .bind_to = THROTTLE},
+  {.input = 3, .min_val = 0,   .max_val =714,  .button = false, .bind_to = RUDDER},
+  {.input = 4, .min_val = 0, .max_val = 652, .button = true, .bind_to = AUX3},
+  {.input = 4, .min_val = 0, .max_val = 357, .button = true, .bind_to = AUX4},
+  {.input = 5, .min_val = 0, .max_val = 652, .button = true, .bind_to = AUX5},
+  {.input = 5, .min_val = 0, .max_val = 357, .button = true, .bind_to = AUX8},
+  {.input = 6, .min_val = 720, .max_val = 0, .button = true, .bind_to = AUX1},
+  {.input = 7, .min_val = 720, .max_val = 0, .button = true, .bind_to = AUX2}
+};
+
 void setup()
 {
+    Serial.begin(115200);
     randomSeed((analogRead(A4) & 0x1F) | (analogRead(A5) << 5));
     pinMode(ledPin, OUTPUT);
     digitalWrite(ledPin, LOW); //start LED off
@@ -143,13 +185,6 @@ void setup()
     pinMode(CS_pin, OUTPUT);
     pinMode(CE_pin, OUTPUT);
     pinMode(MISO_pin, INPUT);
-    frskyInit();
-    
-    // PPM ISR setup
-    attachInterrupt(digitalPinToInterrupt(PPM_pin), ISR_ppm, CHANGE);
-    TCCR1A = 0;  //reset timer1
-    TCCR1B = 0;
-    TCCR1B |= (1 << CS11);  //set timer1 to increment every 1 us @ 8MHz, 0.5 us @16MHz
 
     set_txid(false);
 }
@@ -158,10 +193,15 @@ void loop()
 {
     uint32_t timeout=0;
     // reset / rebind
+    
     if(reset || ppm[AUX8] > PPM_MAX_COMMAND) {
         reset = false;
         selectProtocol();
-        NRF24L01_Reset();
+        if (NRF24L01_Reset())
+          Serial.println("NRF24L01 OK");
+        else
+          Serial.println("NRF24L01 FAILED");
+
         NRF24L01_Initialize();
         init_protocol();
     }
@@ -236,16 +276,17 @@ void set_txid(bool renew)
 
 void selectProtocol()
 {
-    // wait for multiple complete ppm frames
-    ppm_ok = false;
-    uint8_t count = 10;
-    while(count) {
-        while(!ppm_ok) {} // wait
-        update_ppm();
-        if(ppm[AUX8] < PPM_MAX_COMMAND) // reset chan released
-            count--;
-        ppm_ok = false;
-    }
+    update_ppm();
+
+    Serial.println("selectProtocol");
+    Serial.print("ppm[RUDDER]:");
+    Serial.println(ppm[RUDDER]);
+    Serial.print("ppm[AILERON]:");
+    Serial.println(ppm[AILERON]);
+    Serial.print("ppm[ELEVATOR]:");
+    Serial.println(ppm[ELEVATOR]);
+    Serial.print("ppm[THROTTLE]:");
+    Serial.println(ppm[THROTTLE]);
     
     // startup stick commands (protocol selection / renew transmitter ID)
     
@@ -336,101 +377,87 @@ void init_protocol()
     switch(current_protocol) {
         case PROTO_CG023:
         case PROTO_YD829:
+            Serial.println("Init PROTO_CG023 PROTO_YD829");
             CG023_init();
             CG023_bind();
             break;
         case PROTO_V2X2:
+            Serial.println("Init PROTO_V2X2");
             V2x2_init();
             V2x2_bind();
             break;
         case PROTO_CX10_GREEN:
         case PROTO_CX10_BLUE:
+            Serial.println("Init PROTO_CX10_GREEN PROTO_CX10_BLUE");
             CX10_init();
             CX10_bind();
             break;
         case PROTO_H7:
+            Serial.println("Init PROTO_H7");
             H7_init();
             H7_bind();
             break;
         case PROTO_BAYANG:
         case PROTO_BAYANG_SILVERWARE:
+            Serial.println("Init PROTO_BAYANG PROTO_BAYANG_SILVERWARE");
             Bayang_init();
             Bayang_bind();
             break;
         case PROTO_SYMAX5C1:
         case PROTO_SYMAXOLD:
+            Serial.println("Init PROTO_SYMAX5C1 PROTO_SYMAXOLD");
             Symax_init();
             break;
         case PROTO_H8_3D:
+            Serial.println("Init PROTO_H8_3D");
             H8_3D_init();
             H8_3D_bind();
             break;
         case PROTO_MJX:
         case PROTO_E010:
+            Serial.println("Init PROTO_MJX PROTO_E010");
             MJX_init();
             MJX_bind();
             break;
         case PROTO_HISKY:
+            Serial.println("Init PROTO_HISK");
             HiSky_init();
             break;
         case PROTO_KN:
+            Serial.println("Init PROTO_KN");
             kn_start_tx(true); // autobind
             break;
         case PROTO_YD717:
+            Serial.println("Init PROTO_YD717");
             YD717_init();
             break;
         case PROTO_FQ777124:
+            Serial.println("Init PROTO_FQ777124");
             FQ777124_init();
             FQ777124_bind();
             break;
     }
 }
 
-// update ppm values out of ISR    
+// update ppm values out of analog inputs    
 void update_ppm()
 {
-    for(uint8_t ch=0; ch<CHANNELS; ch++) {
-        ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-            ppm[ch] = Servo_data[ch];
-        }
-    }
-#ifdef SPEKTRUM
-    for(uint8_t ch=0; ch<CHANNELS; ch++) {
-        if(ch == AILERON || ch == RUDDER) {
-            ppm[ch] = 3000-ppm[ch];
-        }
-        ppm[ch] = constrain(map(ppm[ch],1120,1880,PPM_MIN,PPM_MAX),PPM_MIN,PPM_MAX);
-    }
-#endif
-}
+    for(uint8_t ch=0; ch<ANALOG_CHANNELS; ch++) {
+        int a_value;
+        
+        a_value = analogRead(a_channels[ch].input);
 
-void ISR_ppm()
-{
-    #if F_CPU == 16000000
-        #define PPM_SCALE 1L
-    #elif F_CPU == 8000000
-        #define PPM_SCALE 0L
-    #else
-        #error // 8 or 16MHz only !
-    #endif
-    static unsigned int pulse;
-    static unsigned long counterPPM;
-    static byte chan;
-    counterPPM = TCNT1;
-    TCNT1 = 0;
-    ppm_ok=false;
-    if(counterPPM < 510 << PPM_SCALE) {  //must be a pulse if less than 510us
-        pulse = counterPPM;
-    }
-    else if(counterPPM > 1910 << PPM_SCALE) {  //sync pulses over 1910us
-        chan = 0;
-    }
-    else{  //servo values between 510us and 2420us will end up here
-        if(chan < CHANNELS) {
-            Servo_data[chan]= constrain((counterPPM + pulse) >> PPM_SCALE, PPM_MIN, PPM_MAX);
-            if(chan==3)
-                ppm_ok = true; // 4 first channels Ok
+        if (a_channels[ch].button) {
+          int comp_value;
+          
+          comp_value = ((int) a_channels[ch].max_val) - ((int) a_channels[ch].min_val);
+          
+          if (abs(comp_value - a_value) < ANALOG_THRESH)
+            ppm[a_channels[ch].bind_to] = PPM_MAX;
+          else
+            ppm[a_channels[ch].bind_to] = PPM_MIN;
+        } else {
+            ppm[a_channels[ch].bind_to] = constrain(map(a_value,a_channels[ch].min_val,a_channels[ch].max_val,PPM_MIN,PPM_MAX),PPM_MIN,PPM_MAX);
         }
-        chan++;
     }
 }

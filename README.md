@@ -1,3 +1,36 @@
+# Analog inputs implementation for nrf24-multipro
+
+This project helps to turn cheap RC radio transmitters into multi protocol devices.
+The idea is to remove embedded controller from an RC transmitter and to use Arduino + NRF24 instead of it.
+Analog pins A0..A7 of Arduino used to measure voltage on RC stick resistors and buttons.
+I used DROMIDA Q100 RC transmitter as a base, it already has NRF24 soldered, but it is possible to use almost any RC control with or without NRF24 on it.
+
+## Connections
+
+| Arduino Uno/Nano    | NRF24L01+ Module               | nRF Pin No.   |
+|---------------------|--------------------------------|---------------|
+| GND                 | GND                            | 1             |
+| 3.3V                | VCC                            | 2             |
+| D7                  | CE                             | 3             |
+| D8                  | CSN                            | 4             |
+| D13                 | SCK                            | 5             |
+| D11                 | MOSI                           | 6             |
+| D12                 | MISO                           | 7             |
+| Not Used            | IRQ                            | 8             |
+
+| Arduino Uno/Nano    | Controller analog              |
+|---------------------|--------------------------------|
+| A0                  | ELEVATOR                       |
+| A1                  | AILERON                        |
+| A2                  | THROTTLE                       |
+| A3                  | RUDDER                         |
+| A4                  | BUTTON                         |
+| A5                  | BUTTON                         |
+| A6                  | BUTTON                         |
+| A7                  | BUTTON                         |
+
+![Nano+DROMIDA Q100](/arduino_transmitter.jpg?raw=true)
+
 # nrf24-multipro
 nRF24L01 multi-protocol RC transmitter
 
